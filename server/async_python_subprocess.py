@@ -3,7 +3,7 @@ import sys
 import subprocess
 from subprocess import Popen
 from starlette.websockets import WebSocketState
-from asyncio import StreamReader
+from asyncio import StreamReader, StreamWriter
 
 from fastapi import WebSocket
 
@@ -19,10 +19,11 @@ class AsyncPythonSubprocess:
     async def start(self):
         self._process = self._open_child_process()
 
+        self.stdin_writer = await self._connect_input_pipe(self._process)
+
         stdout_reader, stderr_reader = await self._connect_output_pipes(self._process)
         self._stdout_pipe_task = asyncio.create_task(self._stdout_pipe(stdout_reader))
         self._stderr_pipe_task = asyncio.create_task(self._stderr_pipe(stderr_reader))
-        # self._stdin_pipe_task = asyncio.create_task(self._stdin_pipe())
         self._exit_task = asyncio.create_task(self._exit())
 
         return self._process.pid
@@ -73,6 +74,19 @@ class AsyncPythonSubprocess:
         await loop.connect_read_pipe(lambda: stdout_protocol, process.stdout)
         await loop.connect_read_pipe(lambda: stderr_protocol, process.stderr)
         return (stdout_reader, stderr_reader)
+
+    async def _connect_input_pipe(
+        self, process: Popen[str]
+    ) -> StreamWriter:
+        """Establish non-blocking readers on the subprocess' input stream."""
+        loop = asyncio.get_event_loop()
+
+        stdin_transport, stdin_protocol = await loop.connect_write_pipe(
+            lambda: asyncio.streams.FlowControlMixin(loop=loop), process.stdin
+        )
+        stdin_writer = asyncio.StreamWriter(stdin_transport, stdin_protocol, None, loop)
+
+        return stdin_writer
 
     # async def _stdin_pipe(self):
     #     try:
