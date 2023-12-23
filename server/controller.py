@@ -23,8 +23,7 @@ async def web_socket_controller(client: WebSocket, event: WebSocketEvent):
             if pid in subprocesses:
                 process = subprocesses[pid]
                 if process and not process.subprocess_exited():
-                    process._process.stdin.write(event.data["data"] + "\n")
-                    process._process.stdin.flush()
+                    process.stdin_writer.write(event.data["data"] + "\n")
             return
         case _:
             response = WebSocketEvent(type="??", data={})
