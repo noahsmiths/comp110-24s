@@ -1,44 +1,51 @@
-import React, { PropsWithChildren, useCallback, useEffect, useState } from "react";
+import React, { PropsWithChildren, useCallback, useEffect, useRef, useState } from "react";
 import { PyProcess, PyProcessState } from "./PyProcess";
 import useWebSocket from "./useWebSocket";
 import { parseJsonMessage } from "./Message";
 
 interface PyProcessUIProps {
-    pyProcess: PyProcess
+    pyProcess: PyProcess,
+    groupingEnabled: boolean,
+    minGroupSize: number,
+    msgGroupTimeSeparationInMS: number,
 }
 
 type StdOut = {
     type: 'stdout';
     line: string;
+    timestamp: number;
 }
 
 type StdErr = {
     type: 'stderr';
     line: string;
+    timestamp: number;
 }
 
 type StdIn = {
     type: 'stdin';
     prompt: string;
     response?: string;
+    timestamp: number;
 }
 
-type StdIO =  StdOut | StdErr |  StdIn;
-
+type StdIO = StdOut | StdErr | StdIn;
 
 export function PyProcessUI(props: PropsWithChildren<PyProcessUIProps>) {
     const { lastMessage, readyState, sendJsonMessage } = useWebSocket();
-    const [ pyProcess, setPyProcess ] = useState(props.pyProcess);
-    const [ stdio, setStdIO ] = useState<StdIO[]>([]);
-    const [ stdinValue, setStdinValue ] = useState<string>("");
+    const [pyProcess, setPyProcess] = useState(props.pyProcess);
+    const [stdio, setStdIO] = useState<StdIO[]>([]);
+    const [stdioGroups, setStdIOGroups] = useState<StdIO[][]>([]);
+    const [stdinValue, setStdinValue] = useState<string>("");
+    const stdioContainer = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         let message = parseJsonMessage(lastMessage);
         if (message) {
-            switch(message.type) {
+            switch (message.type) {
                 case 'RUNNING':
                     if (message.data.request_id === pyProcess.requestId) {
-                        setPyProcess(prev => { 
+                        setPyProcess(prev => {
                             prev.pid = message?.data.pid;
                             prev.state = PyProcessState.RUNNING;
                             return prev;
@@ -47,9 +54,9 @@ export function PyProcessUI(props: PropsWithChildren<PyProcessUIProps>) {
                     break;
                 case 'STDOUT':
                     if (!message.data.is_input_prompt) {
-                        setStdIO((prev) => prev.concat({ type: 'stdout', line: message?.data.data }))
+                        setStdIO((prev) => prev.concat({ type: 'stdout', line: message?.data.data, timestamp: Date.now() }))
                     } else {
-                        setStdIO((prev) => prev.concat({ type: 'stdin', prompt: message?.data.data }))
+                        setStdIO((prev) => prev.concat({ type: 'stdin', prompt: message?.data.data, timestamp: Date.now() }))
                     }
                     break;
                 case 'EXIT':
@@ -68,7 +75,7 @@ export function PyProcessUI(props: PropsWithChildren<PyProcessUIProps>) {
         // This is clean-up only...
         return () => {
             if (pyProcess.state !== PyProcessState.EXITED && pyProcess.pid) {
-                sendJsonMessage({type: "KILL", data: {pid: pyProcess.pid}})
+                sendJsonMessage({ type: "KILL", data: { pid: pyProcess.pid } })
             }
         };
     }, [pyProcess])
@@ -91,7 +98,7 @@ export function PyProcessUI(props: PropsWithChildren<PyProcessUIProps>) {
     };
 
     const handleStdInSend = useCallback((lineIndex: number, stdinLine: StdIn) => {
-        let message = {"type": "STDIN", "data": { "data": stdinValue, "pid": pyProcess.pid }};
+        let message = { "type": "STDIN", "data": { "data": stdinValue, "pid": pyProcess.pid } };
         sendJsonMessage(message);
         setStdIO((prev) => {
             let line = stdio[lineIndex];
@@ -112,26 +119,110 @@ export function PyProcessUI(props: PropsWithChildren<PyProcessUIProps>) {
         });
     }, [stdinValue]);
 
-    return <>
-        <b>{ status }</b>
-        { stdio.map((line, idx) => {
-            switch (line.type) {
-                case 'stdin':
-                    if (line.response === undefined) {
-                        return <p key={idx}>{line.prompt}<br />
-                            <input onChange={handleStdInChange} onKeyUp={(e) => { if (e.key === 'Enter') {handleStdInSend(idx, line);}}} value={stdinValue} autoFocus={true} type="text" className="input input-bordered w-full max-w-xs"></input>
-                            <button onClick={() => handleStdInSend(idx, line)} className="btn btn-primary ml-4">Send</button>
-                        </p>
-                    } else {
-                        return <p key={idx}>{line.prompt}<br />
-                            <input autoFocus={true} type="text" className="input input-bordered w-full max-w-xs" value={line.response} disabled={true}></input>
-                        </p>
-                    }
-                case 'stdout':
-                    return <p key={idx}>{line.line}</p>
-                default:
-                    return <></>;
+    // Auto-scrolling behavior
+    useEffect(() => {
+        if (stdioContainer.current !== null) {
+            stdioContainer.current.scrollTop = stdioContainer.current.scrollHeight;
+        }
+    }, [stdio]);
+
+    // Group stdio output
+    useEffect(() => {
+        let stdioGroupings: StdIO[][] = [];
+
+        for (let i = 0; i < stdio.length; i++) {
+            if (stdio[i].type === 'stdin' || stdio[i].type === 'stderr' || i >= stdio.length - 1) {
+                stdioGroupings.push([stdio[i]]);
+                continue;
             }
-            })}
+
+            let currentLine = stdio[i] as StdOut;
+            let nextLine = stdio[i + 1] as StdOut;
+
+            if (nextLine.timestamp - currentLine.timestamp > props.msgGroupTimeSeparationInMS) {
+                stdioGroupings.push([currentLine]);
+                continue;
+            }
+
+            let potentialGroup = [currentLine, nextLine];
+            currentLine = nextLine;
+            for (let j = i + 2; j < stdio.length; j++) {
+                if (stdio[j].type === 'stdin' || stdio[j].type === 'stderr') {
+                    break;
+                }
+
+                nextLine = stdio[j] as StdOut;
+                if (nextLine.timestamp - currentLine.timestamp > props.msgGroupTimeSeparationInMS) {
+                    break;
+                }
+
+                potentialGroup.push(nextLine);
+                currentLine = nextLine;
+            }
+
+            if (potentialGroup.length >= props.minGroupSize) {
+                stdioGroupings.push(potentialGroup);
+            } else {
+                stdioGroupings.push(...potentialGroup.map(el => [el]));
+            }
+
+            i += (potentialGroup.length - 1);
+        }
+
+        // When stdio grows rapidly, previous useffect calls can complete after newer ones,
+        // so only update groupings if it's based on a newer version of stdio (stdio.length is longer)
+        // Can get rid of this with some proper debouncing but it's here for now
+        setStdIOGroups(currentGroups => stdio.length > currentGroups.length ? stdioGroupings : currentGroups);
+    }, [stdio]);
+
+    function renderLine(line: StdIO, idx: number) {
+        switch (line.type) {
+            case 'stdin':
+                if (line.response === undefined) {
+                    return <p key={idx}>{line.prompt}<br />
+                        <input onChange={handleStdInChange} onKeyUp={(e) => { if (e.key === 'Enter') { handleStdInSend(idx, line as StdIn); } }} value={stdinValue} autoFocus={true} type="text" className="input input-bordered w-full max-w-xs"></input>
+                        <button onClick={() => handleStdInSend(idx, line as StdIn)} className="btn btn-primary ml-4">Send</button>
+                    </p>
+                } else {
+                    return <p key={idx}>{line.prompt}<br />
+                        <input autoFocus={true} type="text" className="input input-bordered w-full max-w-xs" value={line.response} disabled={true}></input>
+                    </p>
+                }
+            case 'stdout':
+                return <p key={idx}>{line.line}</p>
+            default:
+                return <></>;
+        }
+    }
+
+    function renderGroupings() {
+        let idx = 0;
+        return stdioGroups.map((stdioArr) => {
+            return (
+                stdioArr.length === 1
+                    ?
+                    renderLine(stdioArr[0], idx++) // Line is not grouped
+                    :
+                    <details key={"group-" + idx}>
+                        <summary>
+                            ({stdioArr.length}) lines collapsed
+                        </summary>
+                        <div className="swap-on">
+                            {
+                                stdioArr.map((line) => {
+                                    return renderLine(line, idx++);
+                                })
+                            }
+                        </div>
+                    </details>
+            )
+        });
+    }
+
+    return <>
+        <b>{status}</b>
+        <div className="h-[80vh] overflow-y-scroll" ref={stdioContainer}>
+            {props.groupingEnabled ? renderGroupings() : stdio.map((line, idx) => renderLine(line, idx))}
+        </div>
     </>
 }
