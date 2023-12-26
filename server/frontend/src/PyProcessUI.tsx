@@ -131,43 +131,32 @@ export function PyProcessUI(props: PropsWithChildren<PyProcessUIProps>) {
         let stdioGroupings: StdIO[][] = [];
 
         for (let i = 0; i < stdio.length; i++) {
-            if (stdio[i].type === 'stdin' || stdio[i].type === 'stderr' || i >= stdio.length - 1) {
-                stdioGroupings.push([stdio[i]]);
+            let currentMsg = stdio[i];
+            let group = [currentMsg];
+            if (currentMsg.type === 'stdin' || currentMsg.type === 'stderr') {
+                stdioGroupings.push(group);
                 continue;
             }
 
-            let currentLine = stdio[i];
-            let nextLine = stdio[i + 1];
-
-            if (nextLine.timestamp - currentLine.timestamp > props.msgGroupTimeSeparationInMS
-                || nextLine.type === 'stdin' || nextLine.type === 'stderr') {
-                stdioGroupings.push([currentLine]);
-                continue;
-            }
-
-            let potentialGroup = [currentLine, nextLine];
-            currentLine = nextLine;
-            for (let j = i + 2; j < stdio.length; j++) {
-                if (stdio[j].type === 'stdin' || stdio[j].type === 'stderr') {
+            for (let j = i + 1; j < stdio.length; j++) {
+                let nextMsg = stdio[j];
+                if (nextMsg.timestamp - currentMsg.timestamp > props.msgGroupTimeSeparationInMS
+                    || nextMsg.type === 'stdin'
+                    || nextMsg.type === 'stderr') {
                     break;
                 }
 
-                nextLine = stdio[j];
-                if (nextLine.timestamp - currentLine.timestamp > props.msgGroupTimeSeparationInMS) {
-                    break;
-                }
-
-                potentialGroup.push(nextLine);
-                currentLine = nextLine;
+                group.push(nextMsg);
+                currentMsg = nextMsg;
             }
 
-            if (potentialGroup.length >= props.minGroupSize) {
-                stdioGroupings.push(potentialGroup);
+            i += group.length - 1;
+
+            if (group.length >= props.minGroupSize) {
+                stdioGroupings.push(group);
             } else {
-                stdioGroupings.push(...potentialGroup.map(el => [el]));
+                stdioGroupings.push(...group.map(el => [el]));
             }
-
-            i += (potentialGroup.length - 1);
         }
 
         // When stdio grows rapidly, previous useffect calls can complete after newer ones,
