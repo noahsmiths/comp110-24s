@@ -136,10 +136,11 @@ export function PyProcessUI(props: PropsWithChildren<PyProcessUIProps>) {
                 continue;
             }
 
-            let currentLine = stdio[i] as StdOut;
-            let nextLine = stdio[i + 1] as StdOut;
+            let currentLine = stdio[i];
+            let nextLine = stdio[i + 1];
 
-            if (nextLine.timestamp - currentLine.timestamp > props.msgGroupTimeSeparationInMS) {
+            if (nextLine.timestamp - currentLine.timestamp > props.msgGroupTimeSeparationInMS
+                || nextLine.type === 'stdin' || nextLine.type === 'stderr') {
                 stdioGroupings.push([currentLine]);
                 continue;
             }
@@ -151,7 +152,7 @@ export function PyProcessUI(props: PropsWithChildren<PyProcessUIProps>) {
                     break;
                 }
 
-                nextLine = stdio[j] as StdOut;
+                nextLine = stdio[j];
                 if (nextLine.timestamp - currentLine.timestamp > props.msgGroupTimeSeparationInMS) {
                     break;
                 }
