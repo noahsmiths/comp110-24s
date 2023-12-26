@@ -203,18 +203,21 @@ export function PyProcessUI(props: PropsWithChildren<PyProcessUIProps>) {
                     ?
                     renderLine(stdioArr[0], idx++) // Line is not grouped
                     :
-                    <details key={"group-" + idx}>
-                        <summary>
-                            ({stdioArr.length}) lines collapsed
-                        </summary>
-                        <div className="swap-on">
-                            {
-                                stdioArr.map((line) => {
-                                    return renderLine(line, idx++);
-                                })
-                            }
-                        </div>
-                    </details>
+                    <div key={"group-" + idx}>
+                        {renderLine(stdioArr[0], idx++)}
+                        <details>
+                            <summary>
+                                [{stdioArr.length - 1}] more lines collapsed
+                            </summary>
+                            <div>
+                                {
+                                    stdioArr.slice(1).map((line) => {
+                                        return renderLine(line, idx++);
+                                    })
+                                }
+                            </div>
+                        </details>
+                    </div>
             )
         });
     }
