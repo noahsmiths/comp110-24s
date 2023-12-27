@@ -11,6 +11,7 @@ interface PyProcessUIProps {
 type StdOut = {
     type: 'stdout';
     line: string;
+    timestamp: number;
 }
 
 type StdErr = {
@@ -59,17 +60,29 @@ export function PyProcessUI(props: PropsWithChildren<PyProcessUIProps>) {
                             let time = Date.now();
                             let prevLine = prev[prev.length - 1];
 
-                            if (prevLine?.type === 'group') {
+                            if (prevLine?.type === 'group' && time - prevLine?.endTime < 1000) {
                                 let updatedGroup: StdOutGroup = {
                                     type: 'group',
-                                    children: [...prevLine.children, { type: 'stdout', line: message?.data.data }],
+                                    children: [...prevLine.children, { type: 'stdout', line: message?.data.data, timestamp: time }],
                                     startTime: prevLine.startTime,
                                     endTime: time
                                 }
-                                return [...(prev.slice(0, -1)), updatedGroup];
+                                return prev.slice(0, -1).concat(updatedGroup);
                             }
 
-                            return prev.concat({ type: 'group', children: [{ type: 'stdout', line: message?.data.data }], endTime: time, startTime: time });
+                            let i;
+                            for (i = prev.length - 1; i >= 0 && prev[i]?.type === 'stdout'; i--);
+                            i++;
+                            let stdOutCount = prev.length - i;
+
+                            if (stdOutCount >= 20 && stdOutCount / (time - (prev[i] as StdOut).timestamp) > 0.01) {
+                                let childrenArr = prev.slice(i).concat({ type: 'stdout', line: message?.data.data, timestamp: time }) as StdOut[];
+                                return prev.slice(0, i).concat({ type: 'group', children: childrenArr, endTime: time, startTime: time });
+                            } else {
+                                return prev.concat({ type: 'stdout', line: message?.data.data, timestamp: time });
+                            }
+
+                            // return prev.concat({ type: 'group', children: [{ type: 'stdout', line: message?.data.data }], endTime: time, startTime: time });
                         });
                     } else {
                         setStdIO((prev) => prev.concat({ type: 'stdin', prompt: message?.data.data }))
@@ -160,23 +173,14 @@ export function PyProcessUI(props: PropsWithChildren<PyProcessUIProps>) {
                 case 'stderr':
                     return <StdErrMessage key={idx} line={line.line} />;
                 case 'group':
-                    if (line.children.length >= 10 && line.children.length / (line.endTime - line.startTime) > 0.01) {
-                        return <div key={idx}>
-                            <p>{line.children[0].line}</p>
-                            <details>
-                                <summary>[{line.children.length - 1} more lines]</summary>
-                                <div>
-                                    {line.children.slice(1).map((childLine, subIdx) => {
-                                        return <p key={`${idx}-${subIdx}`}>{childLine.line}</p>
-                                    })}
-                                </div>
-                            </details>
+                    return <details key={idx}>
+                        <summary>[{line.children.length - 1} more lines]</summary>
+                        <div>
+                            {line.children.map((childLine, subIdx) => {
+                                return <p key={`${idx}-${subIdx}`}>{childLine.line}</p>
+                            })}
                         </div>
-                    } else {
-                        return line.children.map((childLine, subIdx) => {
-                            return <p key={`${idx}-${subIdx}`}>{childLine.line}</p>
-                        })
-                    }
+                    </details>
             }
         })}
     </div>;
